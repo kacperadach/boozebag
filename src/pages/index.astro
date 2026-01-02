@@ -1,11 +1,129 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
+import fs from "node:fs";
+import path from "node:path";
+import { parse } from "csv-parse/sync";
+import DrinkingCalendar from "../components/DrinkingCalendar";
 
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+const filePath = path.resolve("src/data/booze.csv");
+const csv = fs.readFileSync(filePath, "utf-8");
+
+const records = parse(csv, {
+  columns: true,
+  skip_empty_lines: true,
+}) as Record<string, string>[];
+
+// Extract statistics from the first data row (row 2 in CSV, index 0 in records)
+const statsRow = records[0];
+const stats = {
+  sum: parseInt(statsRow.Sum) || 0,
+  averagePerDay: parseFloat(statsRow["Average Per Day"]) || 0,
+  drinklessDays: parseInt(statsRow["Number of Drinkless Days"]) || 0,
+  totalDays: parseInt(statsRow["Total Days Counted"]) || 0,
+};
+
+// Process the rest of the data (skip the first row which has stats)
+const dayRecords = records.slice(1);
+
+// Parse dates and group by month
+interface DayData {
+  date: Date;
+  drinks: number;
+}
+
+interface MonthData {
+  year: number;
+  month: number;
+  days: DayData[];
+}
+
+const parseDate = (dayString: string): Date | null => {
+  // Format: "Wednesday, January 1 " or "Thursday, January 2 "
+  // Remove quotes and trailing spaces
+  const cleaned = dayString.trim().replace(/^"|"$/g, "");
+  // Extract month and day
+  const match = cleaned.match(/(\w+),?\s+(\w+)\s+(\d+)/);
+  if (!match) return null;
+
+  const [, , monthName, day] = match;
+  const monthNames = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ];
+  const monthIndex = monthNames.indexOf(monthName.toLowerCase());
+  if (monthIndex === -1) return null;
+
+  // We need to determine the year - the data is for 2025
+  // January 1, 2025 is a Wednesday, which matches the first day in the CSV
+  const year = 2025;
+  return new Date(year, monthIndex, parseInt(day));
+};
+
+const dayDataList: DayData[] = dayRecords
+  .map((row) => {
+    const date = parseDate(row.Day);
+    const drinks = parseInt(row["#"]) || 0;
+    return { date, drinks };
+  })
+  .filter((item) => item.date !== null) as DayData[];
+
+// Group by month
+const monthMap = new Map<string, DayData[]>();
+
+dayDataList.forEach((dayData) => {
+  if (!dayData.date) return;
+  const year = dayData.date.getFullYear();
+  const month = dayData.date.getMonth();
+  const key = `${year}-${month}`;
+
+  if (!monthMap.has(key)) {
+    monthMap.set(key, []);
+  }
+  monthMap.get(key)!.push(dayData);
+});
+
+// Convert to array and sort by year/month
+const months: MonthData[] = Array.from(monthMap.entries())
+  .map(([key, days]) => {
+    const [year, month] = key.split("-").map(Number);
+    return {
+      year,
+      month,
+      days: days.sort((a, b) => a.date!.getDate() - b.date!.getDate()),
+    };
+  })
+  .sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    return a.month - b.month;
+  });
 ---
 
-<Layout>
-	<Welcome />
-</Layout>
+<html>
+  <head>
+    <title>Drinking Calendar</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+          Cantarell, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f5f5f5;
+      }
+    </style>
+  </head>
+  <body>
+    <DrinkingCalendar client:load months={months} stats={stats} />
+  </body>
+</html>
