@@ -1,0 +1,8 @@
+name = "my-astro-site"
+main = "workers-site/index.js" # default for Workers Sites
+compatibility_date = "2026-01-02"
+
+# specify your static asset directory
+[site]
+bucket = "./dist"
+entry-point = "workers-site"
